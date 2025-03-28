@@ -7,6 +7,9 @@ from tournament_scheduler import (
     get_match_result, 
     get_player_matches, 
     get_player_statistics,
+    calculate_standings,
+    get_player_ranking,
+    get_complete_ranking,
     match_results,
     current_schedule
 )
@@ -158,3 +161,94 @@ def test_get_player_statistics():
     assert stats["losses"] == 0
     assert stats["sets_won"] == 4
     assert stats["sets_lost"] == 1
+
+def test_point_system_basic():
+    players = ["Anna", "Max", "Tom"]
+    pairs = generate_round_robin_pairs(players)
+    schedule = create_schedule(pairs, players)
+    record_result("Anna", "Max", "6:4, 6:3")  # Anna gewinnt
+    record_result("Anna", "Tom", "6:2, 6:4")  # Anna gewinnt
+    record_result("Max", "Tom", "6:4, 4:6, 6:3")  # Max gewinnt
+    stats_anna = get_player_statistics("Anna")
+    stats_max = get_player_statistics("Max")
+    stats_tom = get_player_statistics("Tom")
+    assert stats_anna["wins"] == 2 and stats_anna["losses"] == 0
+    assert stats_max["wins"] == 1 and stats_max["losses"] == 1
+    assert stats_tom["wins"] == 0 and stats_tom["losses"] == 2
+
+def test_calculate_standings_basic():
+    players = ["Anna", "Max", "Tom"]
+    pairs = generate_round_robin_pairs(players)
+    schedule = create_schedule(pairs, players)
+    record_result("Anna", "Max", "6:4, 6:3")  # Anna gewinnt
+    record_result("Anna", "Tom", "6:2, 6:4")  # Anna gewinnt
+    record_result("Max", "Tom", "6:4, 4:6, 6:3")  # Max gewinnt
+    standings = calculate_standings(players)
+    assert standings[0]["player"] == "Anna" and standings[0]["points"] == 2
+    assert standings[1]["player"] == "Max" and standings[1]["points"] == 1
+    assert standings[2]["player"] == "Tom" and standings[2]["points"] == 0
+
+def test_get_player_ranking():
+    players = ["Anna", "Max", "Tom"]
+    pairs = generate_round_robin_pairs(players)
+    schedule = create_schedule(pairs, players)
+    record_result("Anna", "Max", "6:4, 6:3")  # Anna gewinnt
+    record_result("Anna", "Tom", "6:2, 6:4")  # Anna gewinnt
+    record_result("Max", "Tom", "6:4, 4:6, 6:3")  # Max gewinnt
+    assert get_player_ranking("Anna") == 1
+    assert get_player_ranking("Max") == 2
+    assert get_player_ranking("Tom") == 3
+
+def test_get_complete_ranking():
+    players = ["Anna", "Max", "Tom"]
+    pairs = generate_round_robin_pairs(players)
+    schedule = create_schedule(pairs, players)
+    record_result("Anna", "Max", "6:4, 6:3")  # Anna gewinnt
+    record_result("Anna", "Tom", "6:2, 6:4")  # Anna gewinnt
+    record_result("Max", "Tom", "6:4, 4:6, 6:3")  # Max gewinnt
+    ranking = get_complete_ranking()
+    assert len(ranking) == 3
+    assert ranking[0]["player"] == "Anna" and ranking[0]["matches_won"] == 2
+    assert ranking[1]["player"] == "Max" and ranking[1]["matches_won"] == 1
+    assert ranking[2]["player"] == "Tom" and ranking[2]["matches_won"] == 0
+
+def test_extended_player_statistics():
+    players = ["Anna", "Max"]
+    pairs = generate_round_robin_pairs(players)
+    schedule = create_schedule(pairs, players)
+    record_result("Anna", "Max", "6:4, 6:7, 7:6")  # Anna gewinnt mit Tie-Break
+    stats_anna = get_player_statistics("Anna")
+    assert stats_anna["wins"] == 1
+    assert stats_anna["sets_won"] == 2
+    assert stats_anna["sets_lost"] == 1
+    assert stats_anna["games_won"] == 19  # 6 + 6 + 7
+    assert stats_anna["games_lost"] == 17  # 4 + 7 + 6
+    assert stats_anna["tiebreaks_won"] == 1
+    assert stats_anna["tiebreaks_lost"] == 1
+
+def test_ranking_tie_direct_match():
+    players = ["Anna", "Max", "Tom"]
+    pairs = generate_round_robin_pairs(players)
+    schedule = create_schedule(pairs, players)
+    record_result("Anna", "Max", "6:4, 6:3")  # Anna gewinnt
+    record_result("Tom", "Anna", "6:4, 6:3")  # Tom gewinnt
+    record_result("Max", "Tom", "6:4, 6:3")  # Max gewinnt
+    # Alle haben 1 Sieg
+    standings = calculate_standings(players)
+    assert standings[0]["player"] == "Anna"  # Anna schlägt Max
+    assert standings[1]["player"] == "Max"   # Max schlägt Tom
+    assert standings[2]["player"] == "Tom"   # Tom schlägt Anna
+
+def test_ranking_tie_set_ratio():
+    players = ["Anna", "Max", "Tom", "Lisa"]
+    pairs = generate_round_robin_pairs(players)
+    schedule = create_schedule(pairs, players)
+    record_result("Lisa", "Max", "6:4, 6:3")      # Lisa: 2-0 Sätze
+    record_result("Lisa", "Tom", "6:2, 6:4")      # Lisa: 2-0 Sätze
+    record_result("Max", "Tom", "6:4, 4:6, 6:3")  # Max: 2-1 Sätze
+    record_result("Anna", "Lisa", "6:4, 6:3")     # Lisa: 2-0 Sätze
+    record_result("Anna", "Max", "6:4, 6:3")      # Lisa: 2-0 Sätze
+    record_result("Tom", "Anna", "6:4, 6:3")      # Tom: 2-0 Sätze
+    standings = calculate_standings(players)
+    assert standings[0]["player"] == "Anna"  # 2 Siege, schlägt Anna
+    assert standings[1]["player"] == "Lisa"  # 2 Siege, verlor gegen Lisa
