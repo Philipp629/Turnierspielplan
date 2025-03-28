@@ -81,7 +81,6 @@ def add_player(players, max_players):
     while True:
         player_name = input("Geben Sie den Namen des Spielers ein: ").strip()
         
-        # Überprüfung: Mindestens 2 Zeichen und nur Buchstaben
         if not re.match(r'^[A-Za-zÄÖÜäöüß]{2,}$', player_name):
             print("Ungültiger Name! Bitte nur Buchstaben und mindestens 2 Zeichen verwenden.")
             continue
@@ -93,9 +92,7 @@ def add_player(players, max_players):
         players.append(player_name)
         return Result(True, f"Spieler {player_name} hinzugefügt.")
 
-
 def validate_tennis_score(score):
-    """Validiert ein Tennis-Satzergebnis nach Standardregeln."""
     sets = [s.strip() for s in score.split(",")]
     
     for i, s in enumerate(sets):
@@ -107,18 +104,16 @@ def validate_tennis_score(score):
         if p1_score == p2_score:
             raise ValueError(f"Ungültiger Satz {s}: Ein Satz kann nicht unentschieden enden.")
 
-        # Prüfe reguläre Sätze (bis 6 mit 2 Vorsprung)
         if p1_score >= 6 or p2_score >= 6:
             if (p1_score == 6 and p2_score <= 4) or (p2_score == 6 and p1_score <= 4):
-                continue  # Gültiger regulärer Satz
+                continue
             elif (p1_score == 7 and p2_score == 6) or (p2_score == 7 and p1_score == 6):
-                continue  # Gültiger Tiebreak-Satz
+                continue
             else:
                 raise ValueError(f"Ungültiger Satz {s}: Ein Satz endet bei 6 mit 2 Vorsprung oder 7:6.")
         else:
             raise ValueError(f"Ungültiger Satz {s}: Ein Satz muss bis mindestens 6 gehen.")
     
-    # Prüfe, ob ein eindeutiger Sieger existiert
     player1_wins = sum(1 for s in sets if int(s.split(":")[0]) > int(s.split(":")[1]))
     player2_wins = len(sets) - player1_wins
     if player1_wins == player2_wins:
@@ -157,7 +152,7 @@ def get_player_matches(player):
     return matches
 
 def get_player_statistics(player):
-    stats = {"wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0}
+    stats = {"wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0, "tiebreaks_won": 0, "tiebreaks_lost": 0}
     for (p1, p2), result in match_results.items():
         if p1 == player or p2 == player:
             sets = [s.strip() for s in result.split(",")]
@@ -166,19 +161,31 @@ def get_player_statistics(player):
             for s in sets:
                 p1_score, p2_score = map(int, s.split(":"))
                 if p1 == player:
+                    stats["games_won"] += p1_score
+                    stats["games_lost"] += p2_score
                     if p1_score > p2_score:
                         stats["sets_won"] += 1
                         player_wins += 1
+                        if p1_score == 7 and p2_score == 6:
+                            stats["tiebreaks_won"] += 1
                     else:
                         stats["sets_lost"] += 1
                         opponent_wins += 1
+                        if p2_score == 7 and p1_score == 6:
+                            stats["tiebreaks_lost"] += 1
                 elif p2 == player:
-                    if p2_score > p1_score:
+                    stats["games_won"] += p2_score
+                    stats["games_lost"] += p1_score
+                    if p2_score > p1_score:  # Korrigierter Vergleich
                         stats["sets_won"] += 1
                         player_wins += 1
+                        if p2_score == 7 and p1_score == 6:
+                            stats["tiebreaks_won"] += 1
                     else:
                         stats["sets_lost"] += 1
                         opponent_wins += 1
+                        if p1_score == 7 and p2_score == 6:
+                            stats["tiebreaks_lost"] += 1
             if player_wins > opponent_wins:
                 stats["wins"] += 1
             else:
@@ -186,7 +193,6 @@ def get_player_statistics(player):
     return stats
 
 def input_match_result(schedule):
-    """Trägt automatisch das nächste ausstehende Ergebnis ein."""
     for round_num, round_games in enumerate(schedule):
         for player1, player2 in round_games:
             if not get_match_result(player1, player2):
@@ -208,20 +214,88 @@ def input_match_result(schedule):
 
                     sets.append(set_score)
                     
-                    # Prüfen, ob ein Spieler bereits 2 Sätze gewonnen hat
                     p1_wins = sum(1 for s in sets if int(s.split(":")[0]) > int(s.split(":")[1]))
                     p2_wins = len(sets) - p1_wins
 
                     if p1_wins == 2 or p2_wins == 2:
-                        break  # Spieler hat gewonnen, weitere Eingabe nicht nötig
+                        break
                 
                 score = ", ".join(sets)
-                return player1, player2, score  # Erstes ausstehendes Spiel gefunden -> Ergebnis wird eingetragen
+                return player1, player2, score
 
     print("Alle Ergebnisse sind bereits eingetragen!")
     return None
 
+def calculate_standings(players):
+    standings = []
+    player_order = {p: i for i, p in enumerate(players)}  # Speichere die Eingabereihenfolge
+    for player in players:
+        stats = get_player_statistics(player)
+        standings.append({
+            "player": player,
+            "points": stats["wins"],
+            "matches_won": stats["wins"],
+            "matches_lost": stats["losses"],
+            "sets_won": stats["sets_won"],
+            "sets_lost": stats["sets_lost"],
+            "games_won": stats["games_won"],
+            "games_lost": stats["games_lost"]
+        })
 
+    # Initiale Sortierung nach Punkten
+    standings.sort(key=lambda x: x["points"], reverse=True)
+
+    # Funktion, um direkten Duell-Sieger zu bestimmen
+    def get_direct_winner(p1, p2):
+        result = get_match_result(p1, p2)
+        if result:
+            p1_sets = sum(1 for s in result.split(",") if int(s.split(":")[0]) > int(s.split(":")[1]))
+            p2_sets = len(result.split(",")) - p1_sets
+            return p1 if p1_sets > p2_sets else p2
+        return None
+
+    # Direkter Duell-Vergleich für Gruppen mit gleichen Punkten
+    i = 0
+    while i < len(standings):
+        start = i
+        while i < len(standings) - 1 and standings[i]["points"] == standings[i + 1]["points"]:
+            i += 1
+        i += 1
+        if i - start > 1:  # Mehr als ein Spieler in der Gruppe
+            group = standings[start:i]
+            
+            # Bubble-Sort-ähnliche Logik für direkte Duelle
+            for j in range(len(group) - 1):
+                for k in range(len(group) - 1 - j):
+                    p1 = group[k]["player"]
+                    p2 = group[k + 1]["player"]
+                    winner = get_direct_winner(p1, p2)
+                    if winner == p2:  # Wenn p2 gewinnt, tausche
+                        group[k], group[k + 1] = group[k + 1], group[k]
+            
+            # Aktualisiere standings mit der sortierten Gruppe
+            standings[start:i] = group
+            
+            # Falls keine direkten Duelle vorliegen oder Zyklus, sortiere nach Satz- und Spielverhältnis
+            if all(get_direct_winner(group[j]["player"], group[j + 1]["player"]) is None for j in range(len(group) - 1)):
+                def sort_key(entry):
+                    set_ratio = entry["sets_won"] / max(1, (entry["sets_won"] + entry["sets_lost"]))
+                    game_ratio = entry["games_won"] / max(1, (entry["games_won"] + entry["games_lost"]))
+                    return (entry["points"], set_ratio, game_ratio, -player_order[entry["player"]])
+                standings[start:i] = sorted(standings[start:i], key=sort_key, reverse=True)
+
+    return standings
+
+def get_player_ranking(player):
+    standings = calculate_standings(list(set([p for round in current_schedule for p1, p2 in round for p in (p1, p2)])))
+    for i, entry in enumerate(standings, 1):
+        if entry["player"] == player:
+            return i
+    return None
+
+def get_complete_ranking():
+    players = list(set([p for round in current_schedule for p1, p2 in round for p in (p1, p2)]))
+    return calculate_standings(players)
 
 def main():
     players = []
@@ -265,17 +339,16 @@ def main():
     while True:
         print("\nAktuelle Spieler:", players)
         print("Optionen:")
-        
         open_matches = [(p1, p2) for round in schedule for p1, p2 in round if not get_match_result(p1, p2)]
         if open_matches:
             print("1. Ergebnis eintragen")
-        
         print("2. Spielergebnis abrufen")
         print("3. Spielerstatistik anzeigen")
         print("4. Spielplan anzeigen")
-        print("5. Beenden")
-        
-        choice = input("Wählen Sie eine Option (1-5): ").strip()
+        print("5. Rangliste anzeigen")
+        print("6. Beenden")
+
+        choice = input("Wählen Sie eine Option: ").strip()
 
         if choice == "1" and open_matches:
             result = input_match_result(schedule)
@@ -307,17 +380,30 @@ def main():
             print(f"Niederlagen: {stats['losses']}")
             print(f"Gewonnene Sätze: {stats['sets_won']}")
             print(f"Verlorene Sätze: {stats['sets_lost']}")
+            print(f"Gewonnene Spiele: {stats['games_won']}")
+            print(f"Verlorene Spiele: {stats['games_lost']}")
+            print(f"Gewonnene Tie-Breaks: {stats['tiebreaks_won']}")
+            print(f"Verlorene Tie-Breaks: {stats['tiebreaks_lost']}")
 
         elif choice == "4":
             print_schedule(schedule)
 
         elif choice == "5":
+            ranking = get_complete_ranking()
+            print("\n=== Rangliste ===")
+            print("Pos | Spieler | Matches (W-L) | Sätze (W-L) | Spiele (W-L) | Punkte")
+            print("----|---------|---------------|-------------|--------------|-------")
+            for i, entry in enumerate(ranking, 1):
+                print(f"{i:<3} | {entry['player']:<7} | {entry['matches_won']}-{entry['matches_lost']} | "
+                      f"{entry['sets_won']}-{entry['sets_lost']} | {entry['games_won']}-{entry['games_lost']} | "
+                      f"{entry['points']}")
+
+        elif choice == "6":
             print("Programm wird beendet.")
             break
 
         else:
-            print("Ungültige Eingabe! Bitte wählen Sie eine Option von 1 bis 5.")
-
+            print("Ungültige Eingabe! Bitte wählen Sie eine Option von 1 bis 6.")
 
 if __name__ == "__main__":
     main()
