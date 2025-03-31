@@ -176,7 +176,7 @@ def get_player_statistics(player):
                 elif p2 == player:
                     stats["games_won"] += p2_score
                     stats["games_lost"] += p1_score
-                    if p2_score > p1_score:  # Korrigierter Vergleich
+                    if p2_score > p1_score:
                         stats["sets_won"] += 1
                         player_wins += 1
                         if p2_score == 7 and p1_score == 6:
@@ -207,28 +207,27 @@ def input_match_result(schedule):
                             print("Mindestens 2 gewonnene Sätze erforderlich!")
                             continue
                         break
-
-                    if not re.match(r'^\d+:\d+$', set_score):
-                        print("Ungültiges Format! Verwenden Sie z. B. '6:4'.")
-                        continue
-
-                    sets.append(set_score)
                     
-                    p1_wins = sum(1 for s in sets if int(s.split(":")[0]) > int(s.split(":")[1]))
-                    p2_wins = len(sets) - p1_wins
-
-                    if p1_wins == 2 or p2_wins == 2:
-                        break
+                    try:
+                        validate_tennis_score(set_score)
+                        sets.append(set_score)
+                        p1_wins = sum(1 for s in sets if int(s.split(":")[0]) > int(s.split(":")[1]))
+                        p2_wins = len(sets) - p1_wins
+                        if p1_wins == 2 or p2_wins == 2:
+                            break
+                    except ValueError as e:
+                        print(f"Fehler: {e}")
+                        continue
                 
                 score = ", ".join(sets)
                 return player1, player2, score
-
+    
     print("Alle Ergebnisse sind bereits eingetragen!")
     return None
 
 def calculate_standings(players):
     standings = []
-    player_order = {p: i for i, p in enumerate(players)}  # Speichere die Eingabereihenfolge
+    player_order = {p: i for i, p in enumerate(players)}
     for player in players:
         stats = get_player_statistics(player)
         standings.append({
@@ -242,10 +241,8 @@ def calculate_standings(players):
             "games_lost": stats["games_lost"]
         })
 
-    # Initiale Sortierung nach Punkten
-    standings.sort(key=lambda x: x["points"], reverse=True)
+    standings.sort(key=lambda x: (x["points"], x["sets_won"], x["games_won"]), reverse=True)
 
-    # Funktion, um direkten Duell-Sieger zu bestimmen
     def get_direct_winner(p1, p2):
         result = get_match_result(p1, p2)
         if result:
@@ -254,29 +251,23 @@ def calculate_standings(players):
             return p1 if p1_sets > p2_sets else p2
         return None
 
-    # Direkter Duell-Vergleich für Gruppen mit gleichen Punkten
     i = 0
     while i < len(standings):
         start = i
         while i < len(standings) - 1 and standings[i]["points"] == standings[i + 1]["points"]:
             i += 1
         i += 1
-        if i - start > 1:  # Mehr als ein Spieler in der Gruppe
+        if i - start > 1:
             group = standings[start:i]
-            
-            # Bubble-Sort-ähnliche Logik für direkte Duelle
             for j in range(len(group) - 1):
                 for k in range(len(group) - 1 - j):
                     p1 = group[k]["player"]
                     p2 = group[k + 1]["player"]
                     winner = get_direct_winner(p1, p2)
-                    if winner == p2:  # Wenn p2 gewinnt, tausche
+                    if winner == p2:
                         group[k], group[k + 1] = group[k + 1], group[k]
-            
-            # Aktualisiere standings mit der sortierten Gruppe
             standings[start:i] = group
             
-            # Falls keine direkten Duelle vorliegen oder Zyklus, sortiere nach Satz- und Spielverhältnis
             if all(get_direct_winner(group[j]["player"], group[j + 1]["player"]) is None for j in range(len(group) - 1)):
                 def sort_key(entry):
                     set_ratio = entry["sets_won"] / max(1, (entry["sets_won"] + entry["sets_lost"]))
@@ -291,11 +282,90 @@ def get_player_ranking(player):
     for i, entry in enumerate(standings, 1):
         if entry["player"] == player:
             return i
-    return None
+    return 1 if not standings else len(standings)  # Default #1 wenn keine Matches, sonst letzte Position
 
 def get_complete_ranking():
     players = list(set([p for round in current_schedule for p1, p2 in round for p in (p1, p2)]))
     return calculate_standings(players)
+
+def create_match_matrix(players):
+    width = max(7, max(len(p) for p in players) + 2)  # Mindestens 7, aber größer wenn Namen länger sind
+    header = f"{'':<{width}}|{'|'.join(f'{p:^{width}}' for p in players)}"
+    separator = "-" * width + "+" + "+".join("-" * width for _ in range(len(players)))
+    
+    matrix = [header]
+    for p1 in players:
+        row = f"{p1:<{width-2}}  |"  # 2 Zeichen für " |" reserviert
+        for p2 in players:
+            if p1 == p2:
+                cell = "   X   ".center(width)
+            else:
+                result = get_match_result(p1, p2)
+                cell = "  vs   " if not result else f"  {result.split(',')[0]}  "
+                cell = cell.center(width)
+            row += cell + "|"
+        matrix.append(separator)
+        matrix.append(row)
+    
+    return "\n".join(matrix)
+
+def get_tournament_progress():
+    total_matches = sum(len(round_games) for round_games in current_schedule)
+    played_matches = len(match_results)
+    progress_percent = (played_matches / total_matches * 100) if total_matches > 0 else 0
+    
+    open_matches = []
+    for round_games in current_schedule:
+        for p1, p2 in round_games:
+            if not get_match_result(p1, p2):
+                open_matches.append(f"{p1} vs {p2}")
+    
+    standings = calculate_standings(list(set(p for round in current_schedule for p1, p2 in round for p in (p1, p2))))
+    leader = standings[0] if standings else {"player": "Keiner", "matches_won": 0, "matches_lost": 0}
+    
+    output = [
+        f"Turnier-Fortschritt: {progress_percent:.0f}% ({played_matches}/{total_matches} Matches gespielt)",
+        "",
+        "Ausstehende Matches:" if open_matches else "Keine ausstehenden Matches",
+        *[f"{i+1}. {match}" for i, match in enumerate(open_matches)],
+        "",
+        f"Aktueller Tabellenführer: {leader['player']} ({leader['matches_won']} Siege, {leader['matches_lost']} Niederlagen)"
+    ]
+    return "\n".join(line for line in output if line)
+
+def create_player_performance(player):
+    matches = get_player_matches(player)
+    history = []
+    set_balances = []
+    rankings = []
+    
+    if not matches:
+        history.append("Keine Matches")
+        rankings.append(f"Start:  #1")
+    else:
+        for i, match in enumerate(matches):
+            result = match["result"]
+            sets = result.split(", ")
+            p1_wins = sum(1 for s in sets if int(s.split(":")[0]) > int(s.split(":")[1]))
+            p2_wins = len(sets) - p1_wins
+            my_wins = p1_wins if match["opponent"] != player else p2_wins
+            opp_wins = p2_wins if match["opponent"] != player else p1_wins
+            history.append("W" if my_wins > opp_wins else "L")
+            set_display = "██ █" if my_wins == 2 and opp_wins == 1 else "██" if my_wins == 2 else "█" if my_wins == 1 else ""
+            set_balances.append(f"Match {i+1}: {set_display}  ({my_wins}-{opp_wins})")
+            rankings.append(f"{'Start' if i == 0 else f'Nach {i}'} : #{get_player_ranking(player)} {'↑' if i == 0 else '-' if i > 0 else ''}")
+    
+    output = [
+        f"Spieler: {player}",
+        f"Match-Verlauf: {' '.join(history)}",
+        "",
+        "Satz-Bilanz:",
+        *set_balances,
+        "",
+        "Ranglistenentwicklung:",
+        *rankings
+    ]
+    return "\n".join(output)
 
 def main():
     players = []
@@ -346,7 +416,10 @@ def main():
         print("3. Spielerstatistik anzeigen")
         print("4. Spielplan anzeigen")
         print("5. Rangliste anzeigen")
-        print("6. Beenden")
+        print("6. Spielplan-Matrix anzeigen")
+        print("7. Turnier-Fortschritt anzeigen")
+        print("8. Spieler-Performance anzeigen")
+        print("9. Beenden")
 
         choice = input("Wählen Sie eine Option: ").strip()
 
@@ -360,30 +433,60 @@ def main():
                 except ValueError as e:
                     print(f"Fehler: {e}")
 
-        elif choice == "1" and not open_matches:
-            print("Alle Ergebnisse sind bereits eingetragen!")
-
         elif choice == "2":
-            player1 = input("Erster Spieler: ").strip()
-            player2 = input("Zweiter Spieler: ").strip()
-            result = get_match_result(player1, player2)
-            if result:
-                print(f"Ergebnis für {player1} vs {player2}: {result}")
+            if not players:
+                print("Keine Spieler vorhanden!")
             else:
-                print(f"Kein Ergebnis für {player1} vs {player2} gefunden.")
+                print("\nWählen Sie den ersten Spieler:")
+                for i, player in enumerate(players, 1):
+                    print(f"{i}. {player}")
+                try:
+                    selection1 = int(input("Spieler Nummer eingeben: ").strip())
+                    if 1 <= selection1 <= len(players):
+                        player1 = players[selection1 - 1]
+                        print("\nWählen Sie den zweiten Spieler:")
+                        for i, player in enumerate(players, 1):
+                            print(f"{i}. {player}")
+                        selection2 = int(input("Spieler Nummer eingeben: ").strip())
+                        if 1 <= selection2 <= len(players):
+                            player2 = players[selection2 - 1]
+                            result = get_match_result(player1, player2)
+                            if result:
+                                print(f"Ergebnis für {player1} vs {player2}: {result}")
+                            else:
+                                print(f"Kein Ergebnis für {player1} vs {player2} gefunden.")
+                        else:
+                            print(f"Ungültige Auswahl! Bitte wählen Sie eine Nummer zwischen 1 und {len(players)}.")
+                    else:
+                        print(f"Ungültige Auswahl! Bitte wählen Sie eine Nummer zwischen 1 und {len(players)}.")
+                except ValueError:
+                    print("Ungültige Eingabe! Bitte geben Sie eine Zahl ein.")
 
         elif choice == "3":
-            player = input("Spielername: ").strip()
-            stats = get_player_statistics(player)
-            print(f"\nStatistik für {player}:")
-            print(f"Siege: {stats['wins']}")
-            print(f"Niederlagen: {stats['losses']}")
-            print(f"Gewonnene Sätze: {stats['sets_won']}")
-            print(f"Verlorene Sätze: {stats['sets_lost']}")
-            print(f"Gewonnene Spiele: {stats['games_won']}")
-            print(f"Verlorene Spiele: {stats['games_lost']}")
-            print(f"Gewonnene Tie-Breaks: {stats['tiebreaks_won']}")
-            print(f"Verlorene Tie-Breaks: {stats['tiebreaks_lost']}")
+            if not players:
+                print("Keine Spieler vorhanden!")
+            else:
+                print("\nWählen Sie einen Spieler für die Statistik:")
+                for i, player in enumerate(players, 1):
+                    print(f"{i}. {player}")
+                try:
+                    selection = int(input("Spieler Nummer eingeben: ").strip())
+                    if 1 <= selection <= len(players):
+                        player = players[selection - 1]
+                        stats = get_player_statistics(player)
+                        print(f"\nStatistik für {player}:")
+                        print(f"Siege: {stats['wins']}")
+                        print(f"Niederlagen: {stats['losses']}")
+                        print(f"Gewonnene Sätze: {stats['sets_won']}")
+                        print(f"Verlorene Sätze: {stats['sets_lost']}")
+                        print(f"Gewonnene Spiele: {stats['games_won']}")
+                        print(f"Verlorene Spiele: {stats['games_lost']}")
+                        print(f"Gewonnene Tie-Breaks: {stats['tiebreaks_won']}")
+                        print(f"Verlorene Tie-Breaks: {stats['tiebreaks_lost']}")
+                    else:
+                        print(f"Ungültige Auswahl! Bitte wählen Sie eine Nummer zwischen 1 und {len(players)}.")
+                except ValueError:
+                    print("Ungültige Eingabe! Bitte geben Sie eine Zahl ein.")
 
         elif choice == "4":
             print_schedule(schedule)
@@ -391,19 +494,42 @@ def main():
         elif choice == "5":
             ranking = get_complete_ranking()
             print("\n=== Rangliste ===")
-            print("Pos | Spieler | Matches (W-L) | Sätze (W-L) | Spiele (W-L) | Punkte")
-            print("----|---------|---------------|-------------|--------------|-------")
+            print(f"{'Pos':<4} | {'Spieler':<8} | {'Matches (W-L)':<14} | {'Sätze (W-L)':<12} | {'Spiele (W-L)':<13} | {'Punkte':<6}")
+            print(f"{'-'*4}|{'-'*8}|{'-'*14}|{'-'*12}|{'-'*13}|{'-'*6}")
             for i, entry in enumerate(ranking, 1):
-                print(f"{i:<3} | {entry['player']:<7} | {entry['matches_won']}-{entry['matches_lost']} | "
-                      f"{entry['sets_won']}-{entry['sets_lost']} | {entry['games_won']}-{entry['games_lost']} | "
-                      f"{entry['points']}")
+                print(f"{i:<4} | {entry['player']:<8} | {entry['matches_won']}-{entry['matches_lost']:<12} | "
+                      f"{entry['sets_won']}-{entry['sets_lost']:<9} | {entry['games_won']}-{entry['games_lost']:<10} | "
+                      f"{entry['points']:<6}")
 
         elif choice == "6":
+            print(create_match_matrix(players))
+
+        elif choice == "7":
+            print(get_tournament_progress())
+
+        elif choice == "8":
+            if not players:
+                print("Keine Spieler vorhanden!")
+            else:
+                print("\nWählen Sie einen Spieler für die Performance-Anzeige:")
+                for i, player in enumerate(players, 1):
+                    print(f"{i}. {player}")
+                try:
+                    selection = int(input("Spieler Nummer eingeben: ").strip())
+                    if 1 <= selection <= len(players):
+                        selected_player = players[selection - 1]
+                        print(create_player_performance(selected_player))
+                    else:
+                        print(f"Ungültige Auswahl! Bitte wählen Sie eine Nummer zwischen 1 und {len(players)}.")
+                except ValueError:
+                    print("Ungültige Eingabe! Bitte geben Sie eine Zahl ein.")
+
+        elif choice == "9":
             print("Programm wird beendet.")
             break
 
         else:
-            print("Ungültige Eingabe! Bitte wählen Sie eine Option von 1 bis 6.")
+            print("Ungültige Eingabe! Bitte wählen Sie eine Option von 1 bis 9.")
 
 if __name__ == "__main__":
     main()
