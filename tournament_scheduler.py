@@ -289,25 +289,30 @@ def get_complete_ranking():
     return calculate_standings(players)
 
 def create_match_matrix(players):
-    width = max(7, max(len(p) for p in players) + 2)  # Mindestens 7, aber größer wenn Namen länger sind
-    header = f"{'':<{width}}|{'|'.join(f'{p:^{width}}' for p in players)}"
-    separator = "-" * width + "+" + "+".join("-" * width for _ in range(len(players)))
+    matrix = [["" for _ in range(len(players) + 1)] for _ in range(len(players) + 1)]
+    for i, player in enumerate(players):
+        matrix[i + 1][0] = player
+        matrix[0][i + 1] = player
     
-    matrix = [header]
-    for p1 in players:
-        row = f"{p1:<{width-2}}  |"  # 2 Zeichen für " |" reserviert
-        for p2 in players:
-            if p1 == p2:
-                cell = "   X   ".center(width)
-            else:
-                result = get_match_result(p1, p2)
-                cell = "  vs   " if not result else f"  {result.split(',')[0]}  "
-                cell = cell.center(width)
-            row += cell + "|"
-        matrix.append(separator)
-        matrix.append(row)
+    for (p1, p2), result in match_results.items():
+        p1_index = players.index(p1) + 1
+        p2_index = players.index(p2) + 1
+        # Bereinige das Ergebnis von überflüssigen Leerzeichen
+        cleaned_result = "".join(result.split())  # Entfernt alle Leerzeichen
+        matrix[p1_index][p2_index] = cleaned_result
+        
+        if cleaned_result:
+            # Teile in Sets, entferne Leerzeichen und spiegle jedes Set
+            sets = cleaned_result.split(",")
+            reversed_result = ",".join(f"{s.split(':')[1].strip()}:{s.split(':')[0].strip()}" for s in sets)
+            matrix[p2_index][p1_index] = reversed_result
+        else:
+            matrix[p2_index][p1_index] = ""
     
-    return "\n".join(matrix)
+    return matrix
+
+def make_match_matrix_pretty(matrix):
+    return "\n".join(" | ".join(row) for row in matrix)
 
 def get_tournament_progress():
     total_matches = sum(len(round_games) for round_games in current_schedule)
@@ -502,8 +507,7 @@ def main():
                       f"{entry['points']:<6}")
 
         elif choice == "6":
-            print(create_match_matrix(players))
-
+            print(make_match_matrix_pretty(create_match_matrix(players)))
         elif choice == "7":
             print(get_tournament_progress())
 

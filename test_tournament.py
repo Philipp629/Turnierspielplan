@@ -60,7 +60,16 @@ def test_matrix_empty_tournament():
     pairs = generate_round_robin_pairs(players)
     create_schedule(pairs, players)
     matrix = create_match_matrix(players)
-    assert "Anna   |   X   |  vs   |  vs   |  vs   " in matrix  # Angepasst: zusätzliches Leerzeichen nach "Anna"
+    a = [["" for _ in range(5)] for _ in range(5)]
+    a[0][1] = "Anna"
+    a[0][2] = "Max"
+    a[0][3] = "Tom"
+    a[0][4] = "Lisa"
+    a[1][0] = "Anna"
+    a[2][0] = "Max"
+    a[3][0] = "Tom"
+    a[4][0] = "Lisa"
+    assert a == matrix
 
 def test_matrix_with_results():
     setup_reset_globals()
@@ -68,9 +77,23 @@ def test_matrix_with_results():
     pairs = generate_round_robin_pairs(players)
     create_schedule(pairs, players)
     record_result("Anna", "Max", "6:3, 6:4")
-    record_result("Anna", "Lisa", "6:2, 6:1")
+    record_result("Tom", "Lisa", "6:2, 6:1")
     matrix = create_match_matrix(players)
-    assert "Anna   |   X   |  6:3  |  vs   |  6:2  " in matrix  # Angepasst: zusätzliches Leerzeichen nach "Anna"
+    a = [["" for _ in range(5)] for _ in range(5)] 
+    a[0][1] = "Anna"
+    a[0][2] = "Max"
+    a[0][3] = "Tom"
+    a[0][4] = "Lisa"
+    a[1][0] = "Anna"
+    a[2][0] = "Max"
+    a[3][0] = "Tom"
+    a[4][0] = "Lisa"
+    a[1][2] = "6:3,6:4"
+    a[3][4] = "6:2,6:1"
+    a[2][1] = "3:6,4:6"
+    a[4][3] = "2:6,1:6"
+    assert a == matrix
+    
 
 def test_player_statistics():
     setup_reset_globals()
