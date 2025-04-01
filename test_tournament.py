@@ -3,9 +3,10 @@ from unittest.mock import patch
 from tournament_scheduler import *
 
 def setup_reset_globals():
-    global match_results, current_schedule
+    global match_results, current_schedule, match_days
     match_results.clear()
     current_schedule.clear()
+    match_days.clear()
 
 def test_generate_pairs():
     players = ["Anna", "Max", "Tom"]
@@ -93,7 +94,6 @@ def test_matrix_with_results():
     a[2][1] = "3:6,4:6"
     a[4][3] = "2:6,1:6"
     assert a == matrix
-    
 
 def test_player_statistics():
     setup_reset_globals()
@@ -162,5 +162,114 @@ def test_performance_mixed_results():
     record_result("Max", "Tom", "6:3, 7:6")
     perf = create_player_performance("Max")
     assert "Match-Verlauf: W W" in perf
-    assert "Match 1: ██ █  (2-1)" in perf  # Angepasst: zusätzliches Leerzeichen vor "(2-1)"
+    assert "Match 1: ██ █  (2-1)" in perf
     assert "Match 2: ██  (2-0)" in perf
+
+def test_organize_match_days_basic():
+    setup_reset_globals()
+    players = ["Anna", "Max", "Tom", "Lisa"]
+    pairs = generate_round_robin_pairs(players)
+    organize_match_days(pairs, players)
+    days = match_days
+    assert len(days) >= 3
+    total_matches = sum(len(day["matches"]) for day in days.values())
+    assert total_matches == 6
+    for day in days.values():
+        assert len(day["matches"]) <= 2
+        players_in_day = set()
+        for p1, p2 in day["matches"]:
+            assert p1 not in players_in_day
+            assert p2 not in players_in_day
+            players_in_day.add(p1)
+            players_in_day.add(p2)
+
+def test_get_matches_by_day():
+    setup_reset_globals()
+    players = ["Anna", "Max", "Tom", "Lisa"]
+    pairs = generate_round_robin_pairs(players)
+    organize_match_days(pairs, players)
+    day1_matches = get_matches_by_day(1)
+    assert len(day1_matches) <= 2
+    assert all(isinstance(match, tuple) and len(match) == 2 for match in day1_matches)
+
+def test_get_player_schedule():
+    setup_reset_globals()
+    players = ["Anna", "Max", "Tom", "Lisa"]
+    pairs = generate_round_robin_pairs(players)
+    organize_match_days(pairs, players)
+    schedule = get_player_schedule("Anna")
+    assert "Anna vs." in schedule
+    assert len([line for line in schedule.split("\n") if "Anna vs." in line]) == 3
+
+def test_mark_day_completed():
+    setup_reset_globals()
+    players = ["Anna", "Max", "Tom", "Lisa"]
+    pairs = generate_round_robin_pairs(players)
+    organize_match_days(pairs, players)
+    mark_day_completed(1)
+    days = match_days
+    assert days[1]["completed"] == True
+
+def test_get_next_scheduled_day():
+    setup_reset_globals()
+    players = ["Anna", "Max", "Tom", "Lisa"]
+    pairs = generate_round_robin_pairs(players)
+    organize_match_days(pairs, players)
+    assert get_next_scheduled_day() == 1
+    mark_day_completed(1)
+    assert get_next_scheduled_day() == 2
+
+def test_reschedule_match():
+    setup_reset_globals()
+    players = ["Anna", "Max", "Tom", "Lisa"]
+    pairs = generate_round_robin_pairs(players)
+    organize_match_days(pairs, players)
+    days = match_days
+    original_day1_matches = days[1]["matches"]
+    reschedule_match("Anna", "Max", 4)  # Verwende Tag 4 statt Tag 2
+    days = match_days
+    assert ("Anna", "Max") not in days[1]["matches"]
+    assert ("Anna", "Max") in days[4]["matches"]
+
+def test_odd_number_of_players():
+    setup_reset_globals()
+    players = ["Anna", "Max", "Tom"]
+    pairs = generate_round_robin_pairs(players)
+    organize_match_days(pairs, players)
+    days = match_days
+    total_matches = sum(len(day["matches"]) for day in days.values())
+    assert total_matches == 3
+    for day in days.values():
+        assert len(day["matches"]) <= 1
+
+def test_all_days_completed():
+    setup_reset_globals()
+    players = ["Anna", "Max"]
+    pairs = generate_round_robin_pairs(players)
+    organize_match_days(pairs, players)
+    mark_day_completed(1)
+    assert get_next_scheduled_day() is None
+
+def test_record_result_with_7_5():
+    setup_reset_globals()
+    players = ["Anna", "Max"]
+    pairs = generate_round_robin_pairs(players)
+    create_schedule(pairs, players)
+    record_result("Anna", "Max", "7:5, 6:4")
+    assert get_match_result("Anna", "Max") == "7:5, 6:4"
+
+def test_balanced_breaks():
+    setup_reset_globals()
+    players = ["Anna", "Max", "Tom", "Lisa"]
+    pairs = generate_round_robin_pairs(players)
+    schedule = create_schedule(pairs, players)
+    matches_per_round = defaultdict(list)
+    for round_num, round_games in enumerate(schedule):
+        for p1, p2 in round_games:
+            matches_per_round[p1].append(round_num)
+            matches_per_round[p2].append(round_num)
+    for player in players:
+        rounds = matches_per_round[player]
+        gaps = [rounds[i+1] - rounds[i] for i in range(len(rounds)-1)]
+        assert len(gaps) == 2  # 3 Spiele → 2 Pausen
+        assert all(gap <= 2 for gap in gaps)  # Keine übermäßig langen Pausen

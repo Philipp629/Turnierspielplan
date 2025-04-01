@@ -9,53 +9,52 @@ class Result:
 
 match_results = {}
 current_schedule = []
+match_days = {}
 
 def generate_round_robin_pairs(players):
     return list(itertools.combinations(players, 2))
 
-def create_schedule(pairs, players):
-    global current_schedule
-    schedule = []
+def organize_match_days(pairs, players):
+    global match_days
+    match_days.clear()
     remaining_pairs = list(pairs)
-    player_last_round = {player: -1 for player in players}
-    
+    day_number = 1
+    n = len(players)
+    max_matches_per_day = n // 2
+
     while remaining_pairs:
-        best_pair = None
-        max_min_gap = -1
-        
-        for pair in remaining_pairs:
+        current_day = {"matches": [], "completed": False}
+        players_used = set()
+
+        for pair in remaining_pairs[:]:
             p1, p2 = pair
-            last_p1 = player_last_round[p1]
-            last_p2 = player_last_round[p2]
-            current_round = len(schedule)
-            
-            gap_p1 = current_round - last_p1 if last_p1 >= 0 else float('inf')
-            gap_p2 = current_round - last_p2 if last_p2 >= 0 else float('inf')
-            min_gap = min(gap_p1, gap_p2)
-            
-            if min_gap > max_min_gap:
-                max_min_gap = min_gap
-                best_pair = pair
-        
-        if best_pair is None:
-            best_pair = remaining_pairs[0]
-        
-        p1, p2 = best_pair
-        schedule.append([(p1, p2)])
-        player_last_round[p1] = len(schedule) - 1
-        player_last_round[p2] = len(schedule) - 1
-        remaining_pairs.remove(best_pair)
-    
-    current_schedule = schedule
-    return schedule
+            if (len(current_day["matches"]) < max_matches_per_day and
+                p1 not in players_used and p2 not in players_used):
+                current_day["matches"].append(pair)
+                players_used.add(p1)
+                players_used.add(p2)
+                remaining_pairs.remove(pair)
+
+        if current_day["matches"]:
+            match_days[day_number] = current_day
+            day_number += 1
+        else:
+            raise ValueError("Konnte nicht alle Paarungen verteilen!")
+
+    global current_schedule
+    current_schedule = [day["matches"] for day in match_days.values()]
+    return current_schedule
+
+def create_schedule(pairs, players):
+    return organize_match_days(pairs, players)
 
 def print_schedule(schedule):
     print("\n=== Spielplan ===")
-    for round_num, round_games in enumerate(schedule, 1):
-        print(f"\nRunde {round_num}:")
-        for i, (player1, player2) in enumerate(round_games, 1):
+    for day_num, day_matches in match_days.items():
+        print(f"\nTag {day_num}{' (Abgeschlossen)' if day_matches['completed'] else ''}:")
+        for i, (player1, player2) in enumerate(day_matches["matches"], 1):
             result = get_match_result(player1, player2)
-            print(f"{i}. {player1} vs {player2}{' - ' + result if result else ''}")
+            print(f"  Court {i}: {player1} vs {player2}{' - ' + result if result else ''}")
 
 def check_fairness(schedule, players):
     matches_per_round = defaultdict(list)
@@ -107,10 +106,11 @@ def validate_tennis_score(score):
         if p1_score >= 6 or p2_score >= 6:
             if (p1_score == 6 and p2_score <= 4) or (p2_score == 6 and p1_score <= 4):
                 continue
-            elif (p1_score == 7 and p2_score == 6) or (p2_score == 7 and p1_score == 6):
+            elif ((p1_score == 7 and p2_score in (5, 6)) or 
+                  (p2_score == 7 and p1_score in (5, 6))):
                 continue
             else:
-                raise ValueError(f"Ungültiger Satz {s}: Ein Satz endet bei 6 mit 2 Vorsprung oder 7:6.")
+                raise ValueError(f"Ungültiger Satz {s}: Ein Satz endet bei 6 mit 2 Vorsprung oder bei 7 mit 5 oder 6.")
         else:
             raise ValueError(f"Ungültiger Satz {s}: Ein Satz muss bis mindestens 6 gehen.")
     
@@ -176,7 +176,7 @@ def get_player_statistics(player):
                 elif p2 == player:
                     stats["games_won"] += p2_score
                     stats["games_lost"] += p1_score
-                    if p2_score > p1_score:
+                    if p2_score > p2_score:
                         stats["sets_won"] += 1
                         player_wins += 1
                         if p2_score == 7 and p1_score == 6:
@@ -282,7 +282,7 @@ def get_player_ranking(player):
     for i, entry in enumerate(standings, 1):
         if entry["player"] == player:
             return i
-    return 1 if not standings else len(standings)  # Default #1 wenn keine Matches, sonst letzte Position
+    return 1 if not standings else len(standings)
 
 def get_complete_ranking():
     players = list(set([p for round in current_schedule for p1, p2 in round for p in (p1, p2)]))
@@ -297,12 +297,10 @@ def create_match_matrix(players):
     for (p1, p2), result in match_results.items():
         p1_index = players.index(p1) + 1
         p2_index = players.index(p2) + 1
-        # Bereinige das Ergebnis von überflüssigen Leerzeichen
-        cleaned_result = "".join(result.split())  # Entfernt alle Leerzeichen
+        cleaned_result = "".join(result.split())
         matrix[p1_index][p2_index] = cleaned_result
         
         if cleaned_result:
-            # Teile in Sets, entferne Leerzeichen und spiegle jedes Set
             sets = cleaned_result.split(",")
             reversed_result = ",".join(f"{s.split(':')[1].strip()}:{s.split(':')[0].strip()}" for s in sets)
             matrix[p2_index][p1_index] = reversed_result
@@ -312,7 +310,27 @@ def create_match_matrix(players):
     return matrix
 
 def make_match_matrix_pretty(matrix):
-    return "\n".join(" | ".join(row) for row in matrix)
+    # Bestimme die maximale Breite für jede Spalte
+    col_widths = [max(len(str(row[i])) for row in matrix) for i in range(len(matrix[0]))]
+    # Mindestbreite für bessere Lesbarkeit
+    col_widths = [max(w, 8) for w in col_widths]  # Mindestens 8 Zeichen pro Spalte
+    
+    # Erstelle die Trennlinie
+    separator = "+" + "+".join(["-" * (w + 2) for w in col_widths]) + "+"
+    
+    # Formatiere die Zeilen
+    formatted_rows = []
+    for i, row in enumerate(matrix):
+        formatted_row = "| " + " | ".join(
+            str(cell).center(col_widths[j]) for j, cell in enumerate(row)
+        ) + " |"
+        formatted_rows.append(formatted_row)
+        # Füge eine Trennlinie nach der Kopfzeile hinzu
+        if i == 0:
+            formatted_rows.append(separator)
+    
+    # Kombiniere alles mit der oberen und unteren Rahmenlinie
+    return "\n".join([separator] + formatted_rows + [separator])
 
 def get_tournament_progress():
     total_matches = sum(len(round_games) for round_games in current_schedule)
@@ -372,6 +390,76 @@ def create_player_performance(player):
     ]
     return "\n".join(output)
 
+def get_matches_by_day(day_number):
+    return match_days.get(day_number, {"matches": []})["matches"]
+
+def get_player_schedule(player):
+    output = [f"Spielplan für {player}:\n"]
+    completed_matches = []
+    pending_matches = []
+
+    for day_num, day in match_days.items():
+        for p1, p2 in day["matches"]:
+            if p1 == player or p2 == player:
+                opponent = p2 if p1 == player else p1
+                result = get_match_result(p1, p2)
+                line = f"Tag {day_num}: {player} vs. {opponent} (Court {day['matches'].index((p1, p2)) + 1})"
+                if result:
+                    p1_wins = sum(1 for s in result.split(",") if int(s.split(":")[0]) > int(s.split(":")[1]))
+                    p2_wins = len(result.split(",")) - p1_wins
+                    my_wins = p1_wins if p1 == player else p2_wins
+                    outcome = "Gewonnen" if my_wins > p2_wins else "Verloren"
+                    completed_matches.append(f"- {line}: {outcome} ({result})")
+                else:
+                    pending_matches.append(f"- {line}")
+
+    output.append("Abgeschlossene Matches:")
+    output.extend(completed_matches if completed_matches else ["- Keine"])
+    output.append("\nAusstehende Matches:")
+    output.extend(pending_matches if pending_matches else ["- Keine"])
+    return "\n".join(output)
+
+def mark_day_completed(day_number):
+    if day_number in match_days:
+        match_days[day_number]["completed"] = True
+
+def get_next_scheduled_day():
+    for day_num in sorted(match_days.keys()):
+        if not match_days[day_num]["completed"]:
+            return day_num
+    return None
+
+def reschedule_match(player1, player2, new_day):
+    old_day = None
+    match = (player1, player2)
+    reverse_match = (player2, player1)
+
+    for day_num, day in match_days.items():
+        if match in day["matches"] or reverse_match in day["matches"]:
+            old_day = day_num
+            break
+
+    if not old_day:
+        raise ValueError("Match nicht gefunden!")
+
+    if get_match_result(player1, player2):
+        raise ValueError("Bereits gespieltes Match kann nicht verschoben werden!")
+
+    new_day_players = {p for m in get_matches_by_day(new_day) for p in m}
+    if player1 in new_day_players or player2 in new_day_players:
+        raise ValueError("Ein Spieler hat bereits ein Match am neuen Tag!")
+
+    actual_match = match if match in match_days[old_day]["matches"] else reverse_match
+    match_days[old_day]["matches"].remove(actual_match)
+    if not match_days[old_day]["matches"]:
+        del match_days[old_day]
+    if new_day not in match_days:
+        match_days[new_day] = {"matches": [], "completed": False}
+    match_days[new_day]["matches"].append(actual_match)
+
+    global current_schedule
+    current_schedule = [day["matches"] for day in match_days.values()]
+
 def main():
     players = []
     max_players = 10
@@ -424,7 +512,8 @@ def main():
         print("6. Spielplan-Matrix anzeigen")
         print("7. Turnier-Fortschritt anzeigen")
         print("8. Spieler-Performance anzeigen")
-        print("9. Beenden")
+        print("9. Spieltage anzeigen und verwalten")
+        print("10. Beenden")
 
         choice = input("Wählen Sie eine Option: ").strip()
 
@@ -508,6 +597,7 @@ def main():
 
         elif choice == "6":
             print(make_match_matrix_pretty(create_match_matrix(players)))
+
         elif choice == "7":
             print(get_tournament_progress())
 
@@ -528,12 +618,51 @@ def main():
                 except ValueError:
                     print("Ungültige Eingabe! Bitte geben Sie eine Zahl ein.")
 
-        elif choice == "9":
+        elif choice == "10":
             print("Programm wird beendet.")
             break
 
+        elif choice == "9":
+            print("\nSpieltage:")
+            for day_num, day in match_days.items():
+                status = "Abgeschlossen" if day["completed"] else "Ausstehend"
+                print(f"Tag {day_num} ({status}):")
+                for i, (p1, p2) in enumerate(day["matches"], 1):
+                    result = get_match_result(p1, p2)
+                    print(f"  Court {i}: {p1} vs {p2}{' - ' + result if result else ''}")
+            print("\nOptionen:")
+            print("1. Spieltag als abgeschlossen markieren")
+            print("2. Match verschieben")
+            print("3. Spielerplan anzeigen")
+            sub_choice = input("Wählen Sie eine Option (1-3): ").strip()
+            
+            if sub_choice == "1":
+                try:
+                    day = int(input("Spieltag-Nummer eingeben: "))
+                    mark_day_completed(day)
+                    print(f"Spieltag {day} als abgeschlossen markiert.")
+                except ValueError:
+                    print("Ungültige Eingabe! Bitte geben Sie eine Zahl ein.")
+            
+            elif sub_choice == "2":
+                p1 = input("Erster Spieler: ").strip()
+                p2 = input("Zweiter Spieler: ").strip()
+                try:
+                    new_day = int(input("Neuer Spieltag: "))
+                    reschedule_match(p1, p2, new_day)
+                    print(f"Match {p1} vs {p2} auf Tag {new_day} verschoben.")
+                except ValueError as e:
+                    print(f"Fehler: {e}")
+            
+            elif sub_choice == "3":
+                player = input("Spielername eingeben: ").strip()
+                if player in players:
+                    print(get_player_schedule(player))
+                else:
+                    print("Spieler nicht gefunden!")
+
         else:
-            print("Ungültige Eingabe! Bitte wählen Sie eine Option von 1 bis 9.")
+            print("Ungültige Eingabe! Bitte wählen Sie eine Option von 1 bis 10.")
 
 if __name__ == "__main__":
     main()
