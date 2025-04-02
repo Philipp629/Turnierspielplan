@@ -1,6 +1,9 @@
 import itertools
 from collections import defaultdict
 import re
+from datetime import datetime
+import json
+import csv
 
 class Result:
     def __init__(self, success, message):
@@ -10,6 +13,85 @@ class Result:
 match_results = {}
 current_schedule = []
 match_days = {}
+snapshots = {}
+players = []
+
+def export_results_csv(test_export):
+    try:
+        with open(test_export, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["p1", "p2", "result"])  # Kopfzeile
+            for (p1, p2), result in match_results.items():
+                writer.writerow([p1, p2, result])
+        return Result(True, f"Ergebnisse in {test_export} exportiert")
+    except Exception as e:
+        return Result(False, f"Fehler beim Exportieren: {str(e)}")
+
+def load_tournament(filename):
+    try:
+        with open(filename, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        players.clear()
+        players.extend(data["players"])
+        match_results.clear()
+        match_days.clear()
+        current_schedule.clear()
+        
+        for match in data["matches"]:
+            if match["result"]:
+                match_results[(match["player1"], match["player2"])] = match["result"]
+            if match["day"] not in match_days:
+                match_days[match["day"]] = {"matches": [], "completed": False}
+            match_days[match["day"]]["matches"].append((match["player1"], match["player2"]))
+        
+        for day in data["days"]:
+            match_days[day["number"]]["completed"] = day["status"] == "completed"
+        
+        current_schedule.extend([day["matches"] for day in match_days.values()])
+        return Result(True, f"Turnier aus {filename} geladen")
+    except Exception as e:
+        return Result(False, f"Fehler beim Laden: {str(e)}")
+
+def save_tournament(filename):
+    try:
+        # Turnierdaten zusammenstellen
+        tournament_data = {
+            "tournament_name": "Tennis Tournament",
+            "created_at": datetime.now().isoformat(),
+            "last_modified": datetime.now().isoformat(),
+            "players": list(players),
+            "matches": [
+                {
+                    "id": i + 1,
+                    "player1": p1,
+                    "player2": p2,
+                    "day": day_num,
+                    "court": day["matches"].index((p1, p2)) + 1,  # Korrektur: day["matches"]
+                    "status": "completed" if get_match_result(p1, p2) else "scheduled",
+                    "result": get_match_result(p1, p2) or "",
+                    "winner": p1 if get_match_result(p1, p2) and get_player_statistics(p1)["wins"] > 0 else p2 if get_match_result(p1, p2) else None
+                }
+                for day_num, day in match_days.items()
+                for i, (p1, p2) in enumerate(day["matches"])  # Korrektur: day["matches"]
+            ],
+            "days": [
+                {"number": day_num, "status": "completed" if day["completed"] else "scheduled", "date": datetime.now().date().isoformat()}
+                for day_num, day in match_days.items()
+            ],
+            "current_standings": [
+                {"player": p, "matches_won": get_player_statistics(p)["wins"], "matches_lost": get_player_statistics(p)["losses"], "points": get_player_statistics(p)["wins"]}
+                for p in players
+            ],
+            "version": "1.0"
+        }
+        
+        # In JSON-Datei speichern
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(tournament_data, f, indent=2)
+        return Result(True, f"Turnier in {filename} gespeichert")
+    except Exception as e:
+        return Result(False, f"Fehler beim Speichern: {str(e)}")
 
 def generate_round_robin_pairs(players):
     return list(itertools.combinations(players, 2))
@@ -176,7 +258,7 @@ def get_player_statistics(player):
                 elif p2 == player:
                     stats["games_won"] += p2_score
                     stats["games_lost"] += p1_score
-                    if p2_score > p2_score:
+                    if p2_score > p1_score:
                         stats["sets_won"] += 1
                         player_wins += 1
                         if p2_score == 7 and p1_score == 6:
@@ -513,7 +595,10 @@ def main():
         print("7. Turnier-Fortschritt anzeigen")
         print("8. Spieler-Performance anzeigen")
         print("9. Spieltage anzeigen und verwalten")
-        print("10. Beenden")
+        print("10. Turnier speichern")
+        print("11. Turnier laden")
+        print("12. Turnier exportieren")
+        print("13. Beenden")
 
         choice = input("Wählen Sie eine Option: ").strip()
 
@@ -618,7 +703,7 @@ def main():
                 except ValueError:
                     print("Ungültige Eingabe! Bitte geben Sie eine Zahl ein.")
 
-        elif choice == "10":
+        elif choice == "13":
             print("Programm wird beendet.")
             break
 
@@ -645,10 +730,41 @@ def main():
                     print("Ungültige Eingabe! Bitte geben Sie eine Zahl ein.")
             
             elif sub_choice == "2":
-                p1 = input("Erster Spieler: ").strip()
-                p2 = input("Zweiter Spieler: ").strip()
                 try:
-                    new_day = int(input("Neuer Spieltag: "))
+                    # Quell-Spieltag auswählen
+                    from_day = int(input("Von welchem Spieltag möchten Sie ein Match verschieben? (Nummer eingeben): "))
+                    if from_day not in match_days:
+                        print("Spieltag nicht gefunden!")
+                        return
+                    if not match_days[from_day]["matches"]:
+                        print("Keine Matches auf diesem Spieltag zum Verschieben!")
+                        return
+                    
+                    # Matches des Quell-Spieltages anzeigen
+                    print(f"\nMatches für Tag {from_day}:")
+                    for i, (p1, p2) in enumerate(match_days[from_day]["matches"], 1):
+                        result = get_match_result(p1, p2)
+                        print(f"  {i}. {p1} vs {p2}{' - ' + result if result else ''}")
+                    
+                    # Match per Nummer auswählen
+                    match_idx = int(input("Welches Match möchten Sie verschieben? (Nummer eingeben): ")) - 1
+                    if not (0 <= match_idx < len(match_days[from_day]["matches"])):
+                        print("Ungültige Match-Nummer!")
+                        return
+                    
+                    # Spieler aus dem ausgewählten Match extrahieren
+                    p1, p2 = match_days[from_day]["matches"][match_idx]
+                    
+                    # Ziel-Spieltag auswählen
+                    new_day = int(input("Zu welchem Spieltag soll das Match verschoben werden? (Nummer eingeben): "))
+                    
+                    # Optional: Bestätigung
+                    confirm = input(f"Match {p1} vs {p2} von Tag {from_day} zu Tag {new_day} verschieben? (ja/nein): ").lower()
+                    if confirm != "ja":
+                        print("Verschieben abgebrochen.")
+                        return
+                    
+                    # Match verschieben
                     reschedule_match(p1, p2, new_day)
                     print(f"Match {p1} vs {p2} auf Tag {new_day} verschoben.")
                 except ValueError as e:
@@ -661,8 +777,18 @@ def main():
                 else:
                     print("Spieler nicht gefunden!")
 
-        else:
-            print("Ungültige Eingabe! Bitte wählen Sie eine Option von 1 bis 10.")
+        elif choice == "10":
+            filename = input("Dateiname für Speicherung: ").strip()
+            result = save_tournament(filename)
+            print(result.message)
+        elif choice == "11":
+            filename = input("Dateiname zum Laden: ").strip()
+            result = load_tournament(filename)
+            print(result.message)
+        elif choice == "12":
+            filename = input("Dateiname für Ergebnis-Export: ").strip()
+            result = export_results_csv(filename)
+            print(result.message)
 
 if __name__ == "__main__":
     main()

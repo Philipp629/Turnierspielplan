@@ -1,6 +1,86 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
+import json
+import csv
 from tournament_scheduler import *
+
+@pytest.fixture
+def reset_globals():
+    match_results.clear()
+    match_days.clear()
+    current_schedule.clear()
+    players.clear()
+    yield
+
+def test_save_tournament(reset_globals):
+    # Setup: Turnierdaten vorbereiten
+    players.extend(["Anna", "Max"])
+    match_results[("Anna", "Max")] = "6:3, 6:4"
+    match_days[1] = {"matches": [("Anna", "Max")], "completed": True}
+    current_schedule.append([("Anna", "Max")])
+    
+    # Mock für Dateioperation
+    mock_file = mock_open()
+    with patch("builtins.open", mock_file):
+        result = save_tournament("test_turnier.json")
+        
+        # Überprüfen, ob Datei geschrieben wurde
+        mock_file.assert_called_once_with("test_turnier.json", "w", encoding="utf-8")
+        handle = mock_file()
+        written_data = "".join(call.args[0] for call in handle.write.call_args_list)
+        data = json.loads(written_data)
+        
+        # Überprüfen der gespeicherten Daten
+        assert data["tournament_name"] == "Tennis Tournament"
+        assert data["players"] == ["Anna", "Max"]
+        assert data["matches"][0]["player1"] == "Anna"
+        assert data["matches"][0]["player2"] == "Max"
+        assert data["matches"][0]["result"] == "6:3, 6:4"
+        assert data["days"][0]["number"] == 1
+        assert data["days"][0]["status"] == "completed"
+        assert result.success
+        assert result.message == "Turnier in test_turnier.json gespeichert"
+
+def test_load_tournament(reset_globals):
+    mock_data = json.dumps({
+        "players": ["Anna", "Max"],
+        "matches": [{"id": 1, "player1": "Anna", "player2": "Max", "day": 1, "court": 1, "status": "completed", "result": "6:3, 6:4", "winner": "Anna"}],
+        "days": [{"number": 1, "status": "completed", "date": "2025-04-02"}],
+        "current_standings": [{"player": "Anna", "matches_won": 1, "matches_lost": 0, "points": 1}]
+    })
+    mock_file = mock_open(read_data=mock_data)
+    with patch("builtins.open", mock_file):
+        result = load_tournament("test_turnier.json")
+        assert result.success
+        assert "Anna" in players
+        assert match_results[("Anna", "Max")] == "6:3, 6:4"
+        assert match_days[1]["completed"]
+
+def test_export_results_csv(reset_globals):
+    # Setup
+    players.extend(["Anna", "Max"])
+    pairs = generate_round_robin_pairs(players)
+    create_schedule(pairs, players)
+    record_result("Anna", "Max", "6:3,6:4")
+    
+    # Mock für Dateioperation
+    mock_file = mock_open()
+    with patch("builtins.open", mock_file):
+        result = export_results_csv("test_results.csv")
+        
+        # Überprüfe Erfolg
+        assert result.success, f"Export fehlgeschlagen: {result.message}"
+        
+        # Überprüfe Aufruf von open
+        mock_file.assert_called_once_with("test_results.csv", "w", encoding="utf-8", newline="")
+        
+        # Überprüfe geschriebene Daten
+        handle = mock_file()
+        written_calls = handle.write.call_args_list
+        written_data = "".join(call.args[0] for call in written_calls)
+        expected_data = 'p1,p2,result\r\nAnna,Max,"6:3,6:4"\r\n'  # Anführungszeichen hinzugefügt
+        assert written_data == expected_data, f"Erwartet: {repr(expected_data)}, erhalten: {repr(written_data)}"
+
 
 def setup_reset_globals():
     global match_results, current_schedule, match_days
@@ -273,3 +353,15 @@ def test_balanced_breaks():
         gaps = [rounds[i+1] - rounds[i] for i in range(len(rounds)-1)]
         assert len(gaps) == 2  # 3 Spiele → 2 Pausen
         assert all(gap <= 2 for gap in gaps)  # Keine übermäßig langen Pausen
+
+def test_player_statistics_counts_wins_and_losses_correctly():
+    players = ["Anna", "Max"]
+    pairs = generate_round_robin_pairs(players)
+    create_schedule(pairs, players)
+    record_result("Anna", "Max", "4:6, 4:6")
+    anna_stats = get_player_statistics("Anna")
+    max_stats = get_player_statistics("Max")
+    assert anna_stats["wins"] == 0
+    assert anna_stats["losses"] == 1
+    assert max_stats["wins"] == 1
+    assert max_stats["losses"] == 0
